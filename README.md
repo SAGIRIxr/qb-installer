@@ -49,3 +49,14 @@ journalctl -u qbittorrent-nox@<user> --no-pager -n 50
   save path, WebUI credentials). It does not change anything system-wide.
 - Supported config formats are detected automatically from the chosen
   qBittorrent version (4.1.x uses an MD5 WebUI hash; 4.2+ uses PBKDF2).
+- The build menu is fetched live from the GitHub API. If that call is
+  rate-limited (the unauthenticated API allows 60 requests/hour per IP), the
+  script falls back to the bundled `builds-x86_64.txt` / `builds-ARM64.txt`
+  manifests. Regenerate them when new builds are added to `Seedbox-Components-P`:
+
+  ```bash
+  for a in x86_64 ARM64; do
+    gh api "repos/SAGIRIxr/Seedbox-Components-P/contents/Torrent%20Clients/qBittorrent/$a" \
+      --jq '.[] | select(.type=="dir") | .name' | grep '^qBittorrent-' | sort -V > "builds-$a.txt"
+  done
+  ```

@@ -53,11 +53,20 @@ apt-get install -y -qq --no-install-recommends wget curl ca-certificates jq >/de
   || die "Failed to install prerequisites (wget/curl/ca-certificates/jq)."
 
 # ---------- choose a build ----------
+SELF_RAW="https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main"
 info "Fetching available qBittorrent builds for ${ARCH} ..."
+# Primary source: the live GitHub API (auto-includes any newly uploaded build).
 mapfile -t BUILDS < <(curl -fsSL "${API_BASE}/${ARCH}" 2>/dev/null \
   | jq -r '.[] | select(.type=="dir") | .name' 2>/dev/null \
   | grep '^qBittorrent-' | sort -V)
-[ "${#BUILDS[@]}" -gt 0 ] || die "Could not list builds (GitHub API unreachable or rate-limited). Please try again in a few minutes."
+# Fallback: the bundled manifest served over raw (raw has no API rate limit),
+# used when the unauthenticated API is rate-limited (60/h per IP) or unreachable.
+if [ "${#BUILDS[@]}" -eq 0 ]; then
+  warn "GitHub API unavailable (rate-limited?); falling back to the bundled build list."
+  mapfile -t BUILDS < <(curl -fsSL "${SELF_RAW}/builds-${ARCH}.txt" 2>/dev/null \
+    | grep '^qBittorrent-' | sort -V)
+fi
+[ "${#BUILDS[@]}" -gt 0 ] || die "Could not obtain the build list (network unreachable). Please check connectivity and retry."
 
 echo
 echo "Available builds  (qBittorrent-<ver> - libtorrent-<ver> [- <cpu-opt>]):"
