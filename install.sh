@@ -53,6 +53,8 @@ qb-installer — 只安装 qBittorrent（不做系统调优，不装 BBR）。
   -s <后缀>     构建后缀 / CPU 优化（如 x64_v3），没有就不填
   -w <端口>     WebUI 端口（默认: 8080）
   -i <端口>     入站 / BT 端口（默认: 45000）
+  -g <代理>     GitHub 加速代理，用于拉取所有 GitHub 文件
+                （默认: https://ghfast.top/ ；传 -g "" 则直连 GitHub）
   -y            假定 yes：跳过最后的确认提示
   -h            显示此帮助并退出
 
@@ -61,13 +63,17 @@ qb-installer — 只安装 qBittorrent（不做系统调优，不装 BBR）。
   bash <(wget -qO- ${SELF_RAW}/install.sh)
   # 全自动无人值守
   bash <(wget -qO- ${SELF_RAW}/install.sh) -u alice -p 's3cret' -c 2048 -q 5.0.5 -l v1.2.20 -s x64_v3 -y
+  # 自定义 GitHub 代理 / 直连
+  bash <(wget -qO- ${SELF_RAW}/install.sh) -g https://gh.example.com/
+  bash <(wget -qO- ${SELF_RAW}/install.sh) -g ""
 USAGE
 }
 
 # ---------- parse options ----------
 USERNAME=""; PASSWORD=""; CACHE=""; DLPATH=""; QVER=""; LVER=""; SUFFIX=""
 WEBPORT=""; BTPORT=""; ASSUME_YES=""
-while getopts "u:p:c:d:q:l:s:w:i:yh" opt; do
+GH_PROXY="https://ghfast.top/"   # GitHub proxy prefix; -g overrides, -g "" disables
+while getopts "u:p:c:d:q:l:s:w:i:g:yh" opt; do
   case "$opt" in
     u) USERNAME=$OPTARG ;;
     p) PASSWORD=$OPTARG ;;
@@ -78,11 +84,17 @@ while getopts "u:p:c:d:q:l:s:w:i:yh" opt; do
     s) SUFFIX=$OPTARG ;;
     w) WEBPORT=$OPTARG ;;
     i) BTPORT=$OPTARG ;;
+    g) GH_PROXY=$OPTARG ;;
     y) ASSUME_YES=1 ;;
     h) usage; exit 0 ;;
     *) usage; exit 1 ;;
   esac
 done
+
+# Normalise the proxy prefix to exactly one trailing slash when set.
+# Every GitHub URL below is fetched as "${GH_PROXY}<full-github-url>", so the
+# default https://ghfast.top/ yields https://ghfast.top/https://raw.github... .
+[ -n "$GH_PROXY" ] && GH_PROXY="${GH_PROXY%/}/"
 
 # interactive only if a real terminal is available
 INTERACTIVE=""; if [ -r /dev/tty ] && [ -w /dev/tty ]; then INTERACTIVE=1; fi
@@ -129,7 +141,7 @@ BUILDS=()
 # Primary source: the live GitHub API (auto-includes any newly uploaded build).
 # Requires jq; skipped when jq is unavailable.
 if [ -n "$HAVE_JQ" ]; then
-  mapfile -t BUILDS < <(wget -qO- "${API_BASE}/${ARCH}" 2>/dev/null \
+  mapfile -t BUILDS < <(wget -qO- -T 20 -t 2 "${GH_PROXY}${API_BASE}/${ARCH}" 2>/dev/null \
     | jq -r '.[] | select(.type=="dir") | .name' 2>/dev/null \
     | grep '^qBittorrent-' | sort -V)
 fi
@@ -137,7 +149,7 @@ fi
 # used when jq is missing, or the API is rate-limited (60/h per IP) / unreachable.
 if [ "${#BUILDS[@]}" -eq 0 ]; then
   [ -n "$HAVE_JQ" ] && warn "GitHub API unavailable (rate-limited?); falling back to the bundled build list."
-  mapfile -t BUILDS < <(wget -qO- "${SELF_RAW}/builds-${ARCH}.txt" 2>/dev/null \
+  mapfile -t BUILDS < <(wget -qO- -T 20 -t 2 "${GH_PROXY}${SELF_RAW}/builds-${ARCH}.txt" 2>/dev/null \
     | grep '^qBittorrent-' | sort -V)
 fi
 [ "${#BUILDS[@]}" -gt 0 ] || die "Could not obtain the build list (network unreachable). Please check connectivity and retry."
@@ -226,6 +238,7 @@ echo "    cache       : ${CACHE} MiB"
 echo "    downloads   : ${DLPATH}"
 echo "    WebUI port  : ${WEBPORT}"
 echo "    BT port     : ${BTPORT}"
+echo "    GitHub proxy: ${GH_PROXY:-<direct>}"
 echo
 if [ -z "$ASSUME_YES" ] && [ -n "$INTERACTIVE" ]; then
   ask "Proceed? [Y/n]: "; rd YN
@@ -254,7 +267,7 @@ fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 ENC_BUILD="${BUILD// /%20}"
 info "Downloading qbittorrent-nox ..."
-wget -q "${BIN_BASE}/${ARCH}/${ENC_BUILD}/qbittorrent-nox" -O "${TMP}/qbittorrent-nox" \
+wget -q "${GH_PROXY}${BIN_BASE}/${ARCH}/${ENC_BUILD}/qbittorrent-nox" -O "${TMP}/qbittorrent-nox" \
   || die "Failed to download qbittorrent-nox for '${BUILD}'."
 [ -s "${TMP}/qbittorrent-nox" ] || die "Downloaded qbittorrent-nox is empty."
 install -m 0755 "${TMP}/qbittorrent-nox" /usr/bin/qbittorrent-nox
@@ -302,7 +315,7 @@ fi
 
 # ---------- generate WebUI password hash ----------
 gen_pbkdf2(){
-  wget -q "${BIN_BASE}/${ARCH}/qb_password_gen" -O "${TMP}/qb_password_gen" && chmod +x "${TMP}/qb_password_gen" \
+  wget -q "${GH_PROXY}${BIN_BASE}/${ARCH}/qb_password_gen" -O "${TMP}/qb_password_gen" && chmod +x "${TMP}/qb_password_gen" \
     || die "Failed to download qb_password_gen."
   "${TMP}/qb_password_gen" "$PASSWORD"
 }

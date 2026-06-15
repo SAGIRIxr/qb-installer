@@ -22,6 +22,12 @@
 bash <(wget -qO- https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main/install.sh)
 ```
 
+> 国内服务器若连不上 GitHub，可用代理拉取脚本本身（脚本内部的下载会再默认走 `https://ghfast.top/`）：
+>
+> ```bash
+> bash <(wget -qO- https://ghfast.top/https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main/install.sh)
+> ```
+
 脚本会：
 
 1. 检测 CPU 架构（x86_64 / ARM64）；
@@ -50,6 +56,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main/in
 | `-s <后缀>` | 构建后缀 / CPU 优化（如 `x64_v3`），没有就不填 | 无 |
 | `-w <端口>` | WebUI 端口 | `8080` |
 | `-i <端口>` | 入站 / BT 端口 | `45000` |
+| `-g <代理>` | GitHub 加速代理，用于拉取所有 GitHub 文件；传 `-g ""` 直连 | `https://ghfast.top/` |
 | `-y` | 跳过最后的确认提示 | — |
 | `-h` | 显示帮助并退出 | — |
 
@@ -71,6 +78,9 @@ journalctl -u qbittorrent-nox@<用户> --no-pager -n 50
 
 - 脚本只写 qBittorrent 自身的配置（缓存、IO 缓冲、保存路径、WebUI 账号密码），不改动任何系统级设置。
 - 配置格式按所选 qBittorrent 版本自动判断（4.1.x 用 MD5 哈希，4.2+ 用 PBKDF2）。
+- 所有 GitHub 文件（构建列表、二进制、`qb_password_gen`）默认通过 `-g` 指定的加速代理拉取，
+  方式为在原始 GitHub 链接前拼接代理前缀（如 `https://ghfast.top/https://raw.githubusercontent.com/...`）。
+  国内服务器保持默认即可；网络能直连 GitHub 的用更快，可用 `-g ""` 关闭代理。
 - 构建菜单优先通过 GitHub API 实时获取。若被限流（未认证 API 限 60 次/小时/IP），脚本会回退到随仓库附带的
   `builds-x86_64.txt` / `builds-ARM64.txt` 清单。当 `Seedbox-Components-P` 新增构建后，按下面命令重新生成清单：
 
