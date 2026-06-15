@@ -103,23 +103,41 @@ case "$(uname -m)" in
   *) die "Unsupported CPU architecture: $(uname -m)" ;;
 esac
 
-info "Installing prerequisites (wget curl ca-certificates jq) ..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq --no-install-recommends wget curl ca-certificates jq >/dev/null 2>&1 \
-  || die "Failed to install prerequisites (wget/curl/ca-certificates/jq)."
+# Only install what is actually missing. Everything below uses wget (not curl),
+# so we never pull curl in — handy on boxes where the curl/libcurl4 versions are
+# held back or the package state is otherwise messy.
+need_pkgs=()
+command -v wget >/dev/null 2>&1 || need_pkgs+=(wget)
+command -v jq   >/dev/null 2>&1 || need_pkgs+=(jq)
+[ -e /etc/ssl/certs/ca-certificates.crt ] || need_pkgs+=(ca-certificates)
+if [ "${#need_pkgs[@]}" -gt 0 ]; then
+  info "Installing missing prerequisites: ${need_pkgs[*]} ..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || warn "apt-get update failed; continuing with the current package state."
+  apt-get install -y -qq --no-install-recommends "${need_pkgs[@]}" \
+    || warn "apt-get could not install: ${need_pkgs[*]} (continuing if the essentials are present)."
+fi
+# Hard requirement: a downloader. wget is used for every download below.
+command -v wget >/dev/null 2>&1 || die "wget is required but is not available and could not be installed."
+# jq is optional: it is only used to read the live GitHub API. Without it the
+# script falls back to the bundled per-arch manifest.
+HAVE_JQ=""; command -v jq >/dev/null 2>&1 && HAVE_JQ=1
 
 # ---------- obtain the list of available builds ----------
 info "Fetching available qBittorrent builds for ${ARCH} ..."
+BUILDS=()
 # Primary source: the live GitHub API (auto-includes any newly uploaded build).
-mapfile -t BUILDS < <(curl -fsSL "${API_BASE}/${ARCH}" 2>/dev/null \
-  | jq -r '.[] | select(.type=="dir") | .name' 2>/dev/null \
-  | grep '^qBittorrent-' | sort -V)
-# Fallback: the bundled manifest served over raw (raw has no API rate limit),
-# used when the unauthenticated API is rate-limited (60/h per IP) or unreachable.
+# Requires jq; skipped when jq is unavailable.
+if [ -n "$HAVE_JQ" ]; then
+  mapfile -t BUILDS < <(wget -qO- "${API_BASE}/${ARCH}" 2>/dev/null \
+    | jq -r '.[] | select(.type=="dir") | .name' 2>/dev/null \
+    | grep '^qBittorrent-' | sort -V)
+fi
+# Fallback: the bundled manifest served over raw (no API rate limit, no jq),
+# used when jq is missing, or the API is rate-limited (60/h per IP) / unreachable.
 if [ "${#BUILDS[@]}" -eq 0 ]; then
-  warn "GitHub API unavailable (rate-limited?); falling back to the bundled build list."
-  mapfile -t BUILDS < <(curl -fsSL "${SELF_RAW}/builds-${ARCH}.txt" 2>/dev/null \
+  [ -n "$HAVE_JQ" ] && warn "GitHub API unavailable (rate-limited?); falling back to the bundled build list."
+  mapfile -t BUILDS < <(wget -qO- "${SELF_RAW}/builds-${ARCH}.txt" 2>/dev/null \
     | grep '^qBittorrent-' | sort -V)
 fi
 [ "${#BUILDS[@]}" -gt 0 ] || die "Could not obtain the build list (network unreachable). Please check connectivity and retry."
