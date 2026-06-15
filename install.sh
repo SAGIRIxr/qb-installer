@@ -35,32 +35,31 @@ rd(){ read -r "$@" </dev/tty; }
 
 usage(){
 cat <<USAGE
-qb-installer — install qBittorrent only (no system tuning, no BBR).
+qb-installer — 只安装 qBittorrent（不做系统调优，不装 BBR）。
 
-Usage:
-  bash <(wget -qO- ${SELF_RAW}/install.sh) [options]
+用法:
+  bash <(wget -qO- ${SELF_RAW}/install.sh) [选项]
 
-Run with no options for a fully interactive install. Provide any option below to
-skip the matching prompt; anything still missing is asked interactively (or, on
-a host with no terminal, causes an error so unattended runs fail loudly).
+不带任何选项即为全交互安装。给出下面任意选项可跳过对应的提问；仍然缺少的项会
+交互询问（若主机没有终端，则报错退出，使无人值守运行明确失败）。
 
-Options:
-  -u <username>   WebUI username
-  -p <password>   WebUI password
-  -c <MiB>        disk cache size in MiB (e.g. 2048)
-  -d <path>       download path (default: /home/<user>/qbittorrent/Downloads)
-  -q <version>    qBittorrent version (e.g. 5.0.5)
-  -l <version>    libtorrent version (e.g. v1.2.20 or 1_1_14)
-  -s <suffix>     build suffix / CPU optimisation (e.g. x64_v3), if any
-  -w <port>       WebUI port (default: 8080)
-  -i <port>       incoming / BT port (default: 45000)
-  -y              assume "yes": skip the final confirmation prompt
-  -h              show this help and exit
+选项:
+  -u <用户名>   WebUI 用户名
+  -p <密码>     WebUI 密码
+  -c <MiB>      磁盘缓存大小，单位 MiB（如 2048）
+  -d <路径>     下载路径（默认: /home/<用户>/qbittorrent/Downloads）
+  -q <版本>     qBittorrent 版本（如 5.0.5）
+  -l <版本>     libtorrent 版本（如 v1.2.20 或 1_1_14）
+  -s <后缀>     构建后缀 / CPU 优化（如 x64_v3），没有就不填
+  -w <端口>     WebUI 端口（默认: 8080）
+  -i <端口>     入站 / BT 端口（默认: 45000）
+  -y            假定 yes：跳过最后的确认提示
+  -h            显示此帮助并退出
 
-Examples:
-  # interactive
+示例:
+  # 交互式
   bash <(wget -qO- ${SELF_RAW}/install.sh)
-  # fully unattended
+  # 全自动无人值守
   bash <(wget -qO- ${SELF_RAW}/install.sh) -u alice -p 's3cret' -c 2048 -q 5.0.5 -l v1.2.20 -s x64_v3 -y
 USAGE
 }
