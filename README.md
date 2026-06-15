@@ -9,8 +9,6 @@
 - **不**安装 BBR；
 - **不**安装任何其它组件（autobrr、vertex、filebrowser 等）。
 
-预编译的 `qbittorrent-nox` 二进制来自完整安装器使用的同一个仓库：
-[`SAGIRIxr/Seedbox-Components-P`](https://github.com/SAGIRIxr/Seedbox-Components-P)。
 
 ## 使用方法
 
