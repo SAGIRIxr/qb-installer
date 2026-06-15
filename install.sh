@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# qb-installer — standalone, interactive qBittorrent installer
+# qb-installer — standalone qBittorrent installer (interactive OR flag-driven)
 # -----------------------------------------------------------------------------
 # Installs ONLY qBittorrent (precompiled qbittorrent-nox) with a WebUI.
 # It does NOT touch sysctl / kernel settings, does NOT install BBR, and does
@@ -9,14 +9,17 @@
 # The qbittorrent-nox binary is pulled from the same place the full seedbox
 # installer uses: SAGIRIxr/Seedbox-Components-P.
 #
-# Usage:
+# Run with no options for a fully interactive install, or pass options to skip
+# the matching prompt (anything still missing is asked interactively):
 #   bash <(wget -qO- https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main/install.sh)
+#   bash <(wget -qO- .../install.sh) -u alice -p 's3cret' -c 2048 -q 5.0.5 -l v1.2.20 -s x64_v3 -y
 # -----------------------------------------------------------------------------
 set -o pipefail
 
 BIN_REPO="SAGIRIxr/Seedbox-Components-P"
 BIN_BASE="https://raw.githubusercontent.com/${BIN_REPO}/main/Torrent%20Clients/qBittorrent"
 API_BASE="https://api.github.com/repos/${BIN_REPO}/contents/Torrent%20Clients/qBittorrent"
+SELF_RAW="https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main"
 
 # ---------- pretty output ----------
 RED=$'\e[31m'; GRN=$'\e[32m'; YLW=$'\e[33m'; CYN=$'\e[36m'; RST=$'\e[0m'
@@ -29,6 +32,61 @@ die(){  err "$*"; exit 1; }
 # read always from the real terminal so the script also works when launched as
 #   bash <(wget -qO- ...)
 rd(){ read -r "$@" </dev/tty; }
+
+usage(){
+cat <<USAGE
+qb-installer — install qBittorrent only (no system tuning, no BBR).
+
+Usage:
+  bash <(wget -qO- ${SELF_RAW}/install.sh) [options]
+
+Run with no options for a fully interactive install. Provide any option below to
+skip the matching prompt; anything still missing is asked interactively (or, on
+a host with no terminal, causes an error so unattended runs fail loudly).
+
+Options:
+  -u <username>   WebUI username
+  -p <password>   WebUI password
+  -c <MiB>        disk cache size in MiB (e.g. 2048)
+  -d <path>       download path (default: /home/<user>/qbittorrent/Downloads)
+  -q <version>    qBittorrent version (e.g. 5.0.5)
+  -l <version>    libtorrent version (e.g. v1.2.20 or 1_1_14)
+  -s <suffix>     build suffix / CPU optimisation (e.g. x64_v3), if any
+  -w <port>       WebUI port (default: 8080)
+  -i <port>       incoming / BT port (default: 45000)
+  -y              assume "yes": skip the final confirmation prompt
+  -h              show this help and exit
+
+Examples:
+  # interactive
+  bash <(wget -qO- ${SELF_RAW}/install.sh)
+  # fully unattended
+  bash <(wget -qO- ${SELF_RAW}/install.sh) -u alice -p 's3cret' -c 2048 -q 5.0.5 -l v1.2.20 -s x64_v3 -y
+USAGE
+}
+
+# ---------- parse options ----------
+USERNAME=""; PASSWORD=""; CACHE=""; DLPATH=""; QVER=""; LVER=""; SUFFIX=""
+WEBPORT=""; BTPORT=""; ASSUME_YES=""
+while getopts "u:p:c:d:q:l:s:w:i:yh" opt; do
+  case "$opt" in
+    u) USERNAME=$OPTARG ;;
+    p) PASSWORD=$OPTARG ;;
+    c) CACHE=$OPTARG ;;
+    d) DLPATH=$OPTARG ;;
+    q) QVER=$OPTARG ;;
+    l) LVER=$OPTARG ;;
+    s) SUFFIX=$OPTARG ;;
+    w) WEBPORT=$OPTARG ;;
+    i) BTPORT=$OPTARG ;;
+    y) ASSUME_YES=1 ;;
+    h) usage; exit 0 ;;
+    *) usage; exit 1 ;;
+  esac
+done
+
+# interactive only if a real terminal is available
+INTERACTIVE=""; if [ -r /dev/tty ] && [ -w /dev/tty ]; then INTERACTIVE=1; fi
 
 # ---------- preflight ----------
 [ "$(id -u)" -eq 0 ] || die "Please run this script as root."
@@ -52,8 +110,7 @@ apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq --no-install-recommends wget curl ca-certificates jq >/dev/null 2>&1 \
   || die "Failed to install prerequisites (wget/curl/ca-certificates/jq)."
 
-# ---------- choose a build ----------
-SELF_RAW="https://raw.githubusercontent.com/SAGIRIxr/qb-installer/main"
+# ---------- obtain the list of available builds ----------
 info "Fetching available qBittorrent builds for ${ARCH} ..."
 # Primary source: the live GitHub API (auto-includes any newly uploaded build).
 mapfile -t BUILDS < <(curl -fsSL "${API_BASE}/${ARCH}" 2>/dev/null \
@@ -68,49 +125,82 @@ if [ "${#BUILDS[@]}" -eq 0 ]; then
 fi
 [ "${#BUILDS[@]}" -gt 0 ] || die "Could not obtain the build list (network unreachable). Please check connectivity and retry."
 
-echo
-echo "Available builds  (qBittorrent-<ver> - libtorrent-<ver> [- <cpu-opt>]):"
-i=1; for b in "${BUILDS[@]}"; do printf "   %2d) %s\n" "$i" "$b"; i=$((i+1)); done
-echo
+# ---------- resolve the build ----------
 BUILD=""
-while :; do
-  ask "Select a build [1-${#BUILDS[@]}]: "; rd n
-  if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#BUILDS[@]}" ]; then
-    BUILD="${BUILDS[$((n-1))]}"; break
+if [ -n "$QVER" ]; then
+  if [ -z "$LVER" ]; then
+    warn "-q was given without -l (libtorrent version); cannot resolve a build from flags."
+  else
+    cand="qBittorrent-${QVER} - libtorrent-${LVER}"
+    [ -n "$SUFFIX" ] && cand="${cand} - ${SUFFIX}"
+    for b in "${BUILDS[@]}"; do [ "$b" = "$cand" ] && { BUILD="$b"; break; }; done
+    [ -z "$BUILD" ] && warn "Requested build not found for ${ARCH}: ${cand}"
   fi
-  warn "Invalid choice."
-done
+fi
+if [ -z "$BUILD" ]; then
+  if [ -n "$INTERACTIVE" ]; then
+    echo
+    echo "Available builds  (qBittorrent-<ver> - libtorrent-<ver> [- <cpu-opt>]):"
+    i=1; for b in "${BUILDS[@]}"; do printf "   %2d) %s\n" "$i" "$b"; i=$((i+1)); done
+    echo
+    while :; do
+      ask "Select a build [1-${#BUILDS[@]}]: "; rd n
+      if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#BUILDS[@]}" ]; then
+        BUILD="${BUILDS[$((n-1))]}"; break
+      fi
+      warn "Invalid choice."
+    done
+  else
+    err "No valid build selected and no terminal available for interactive choice."
+    err "Pass -q/-l (and -s) matching one of these:"
+    printf '  %s\n' "${BUILDS[@]}" >&2
+    exit 1
+  fi
+fi
 info "Selected build: ${BUILD}"
 
 # qBittorrent version number — decides which config format to write
 QB_NUM=$(sed -n 's/^qBittorrent-\([0-9][0-9.]*\).*/\1/p' <<<"$BUILD")
 [ -n "$QB_NUM" ] || die "Could not parse the qBittorrent version from '${BUILD}'."
 
-# ---------- interactive prompts ----------
-echo
-ask "WebUI username: "; rd USERNAME
-[ -n "$USERNAME" ] || die "Username cannot be empty."
-ask "WebUI password: "; rd PASSWORD
-[ -n "$PASSWORD" ] || die "Password cannot be empty."
-
-while :; do
-  ask "Disk cache size in MiB (e.g. 2048): "; rd CACHE
-  [[ "$CACHE" =~ ^[0-9]+$ ]] && break; warn "Cache must be a number."
-done
-
+# ---------- resolve remaining fields (flag value, else prompt, else default) ----------
+# username (required)
+if [ -z "$USERNAME" ]; then
+  [ -n "$INTERACTIVE" ] || die "Username is required (-u)."
+  while [ -z "$USERNAME" ]; do ask "WebUI username: "; rd USERNAME; done
+fi
+# password (required)
+if [ -z "$PASSWORD" ]; then
+  [ -n "$INTERACTIVE" ] || die "Password is required (-p)."
+  while [ -z "$PASSWORD" ]; do ask "WebUI password: "; rd PASSWORD; done
+fi
+# cache (required, numeric)
+if [ -z "$CACHE" ]; then
+  [ -n "$INTERACTIVE" ] || die "Cache size is required (-c)."
+  while :; do ask "Disk cache size in MiB (e.g. 2048): "; rd CACHE; [[ "$CACHE" =~ ^[0-9]+$ ]] && break; warn "Cache must be a number."; done
+else
+  [[ "$CACHE" =~ ^[0-9]+$ ]] || die "Cache (-c) must be a number."
+fi
+# download path (default)
 DEF_DL="/home/${USERNAME}/qbittorrent/Downloads"
-ask "Download path [${DEF_DL}]: "; rd DLPATH
-DLPATH="${DLPATH:-$DEF_DL}"
+if [ -z "$DLPATH" ]; then
+  if [ -n "$INTERACTIVE" ]; then ask "Download path [${DEF_DL}]: "; rd DLPATH; fi
+  DLPATH="${DLPATH:-$DEF_DL}"
+fi
+# WebUI port (default 8080, numeric)
+if [ -z "$WEBPORT" ]; then
+  if [ -n "$INTERACTIVE" ]; then ask "WebUI port [8080]: "; rd WEBPORT; fi
+  WEBPORT="${WEBPORT:-8080}"
+fi
+[[ "$WEBPORT" =~ ^[0-9]+$ ]] || die "WebUI port (-w) must be a number."
+# incoming/BT port (default 45000, numeric)
+if [ -z "$BTPORT" ]; then
+  if [ -n "$INTERACTIVE" ]; then ask "Incoming (BT) port [45000]: "; rd BTPORT; fi
+  BTPORT="${BTPORT:-45000}"
+fi
+[[ "$BTPORT" =~ ^[0-9]+$ ]] || die "Incoming port (-i) must be a number."
 
-while :; do
-  ask "WebUI port [8080]: "; rd WEBPORT; WEBPORT="${WEBPORT:-8080}"
-  [[ "$WEBPORT" =~ ^[0-9]+$ ]] && break; warn "Port must be a number."
-done
-while :; do
-  ask "Incoming (BT) port [45000]: "; rd BTPORT; BTPORT="${BTPORT:-45000}"
-  [[ "$BTPORT" =~ ^[0-9]+$ ]] && break; warn "Port must be a number."
-done
-
+# ---------- summary + confirm ----------
 echo
 info "About to install:"
 echo "    build       : ${BUILD}"
@@ -120,8 +210,10 @@ echo "    downloads   : ${DLPATH}"
 echo "    WebUI port  : ${WEBPORT}"
 echo "    BT port     : ${BTPORT}"
 echo
-ask "Proceed? [Y/n]: "; rd YN
-case "$YN" in [Nn]*) die "Aborted by user." ;; esac
+if [ -z "$ASSUME_YES" ] && [ -n "$INTERACTIVE" ]; then
+  ask "Proceed? [Y/n]: "; rd YN
+  case "$YN" in [Nn]*) die "Aborted by user." ;; esac
+fi
 
 # ---------- create user ----------
 if ! id -u "$USERNAME" >/dev/null 2>&1; then
